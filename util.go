@@ -99,6 +99,14 @@ func GenUUID() string {
 	return base64.URLEncoding.EncodeToString(uuid[:])
 }
 
+func endTx(tx *sql.Tx, err *error) {
+	if *err == nil {
+		tx.Commit()
+	} else {
+		tx.Rollback()
+	}
+}
+
 func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duration, f func()) {
 	rc := redisPool.Get()
 	defer rc.Close()
