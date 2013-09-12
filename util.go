@@ -45,20 +45,14 @@ func HandleError(w http.ResponseWriter) {
 	}
 }
 
-func SendError(errType, errStr string) {
-	panic(Err{errType, errStr})
-}
-
-func AssertNoError(err error) {
+func PanicError(err error) {
 	if err != nil {
 		panic(err)
 	}
 }
 
-func CheckMathod(r *http.Request, method string) {
-	if r.Method != method {
-		SendError("err_method_not_allowed", "")
-	}
+func SendError(errType, errStr string) {
+	panic(Err{errType, errStr})
 }
 
 func CheckError(err error, errType string) {
@@ -67,6 +61,12 @@ func CheckError(err error, errType string) {
 			errType = "err_internal"
 		}
 		SendError(errType, fmt.Sprintf("%v", err))
+	}
+}
+
+func CheckMathod(r *http.Request, method string) {
+	if r.Method != method {
+		SendError("err_method_not_allowed", "")
 	}
 }
 
@@ -81,12 +81,6 @@ func WriteResponse(w http.ResponseWriter, v interface{}) {
 	encoder.Encode(v)
 }
 
-func Opendb(dbname string) *sql.DB {
-	db, err := sql.Open("mysql", fmt.Sprintf("root@/%s?parseTime=true", dbname))
-	CheckError(err, "")
-	return db
-}
-
 func Sha224(s string) string {
 	hasher := sha256.New224()
 	hasher.Write([]byte(s))
@@ -99,7 +93,7 @@ func GenUUID() string {
 	return base64.URLEncoding.EncodeToString(uuid[:])
 }
 
-func endTx(tx *sql.Tx, err *error) {
+func EndTx(tx *sql.Tx, err *error) {
 	if *err == nil {
 		tx.Commit()
 	} else {
