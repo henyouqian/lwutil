@@ -26,9 +26,8 @@ type Err struct {
 	ErrorString string
 }
 
-func HandleError(w http.ResponseWriter) {
+func handleError(w http.ResponseWriter) {
 	if r := recover(); r != nil {
-		w.WriteHeader(http.StatusBadRequest)
 		encoder := json.NewEncoder(w)
 
 		var err Err
@@ -36,39 +35,61 @@ func HandleError(w http.ResponseWriter) {
 		case Err:
 			err = r.(Err)
 		default:
-			err = Err{"err_internal", fmt.Sprintf("%v", r)}
-
-			// buf := make([]byte, 1024)
-			// runtime.Stack(buf, false)
-			// glog.Errorf("%v\n%s\n", r, buf)
+			err = Err{"", fmt.Sprintf("%v", r)}
 		}
 
-		buf := make([]byte, 1024)
-		runtime.Stack(buf, false)
-		glog.Errorf("%v\n%s\n", r, buf)
+		if err.Error == "" {
+			err.Error = "err_internal"
+			w.WriteHeader(http.StatusInternalServerError)
+		} else {
+			w.WriteHeader(http.StatusBadRequest)
+		}
+
+		//buf := make([]byte, 1024)
+		//runtime.Stack(buf, false)
+		//glog.Errorf("%v\n%s\n", r, buf)
+		glog.Errorln(r)
 
 		encoder.Encode(&err)
 	}
 }
 
-func PanicError(err error) {
+type ReqHandler func(http.ResponseWriter, *http.Request)
+
+func (fn ReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer handleError(w)
+	fn(w, r)
+}
+
+func PanicIfError(err error) {
 	if err != nil {
 		panic(err)
 	}
 }
 
-func SendError(errType, errStr string) {
+func CheckError(errType string, err error) {
+	if err == nil {
+		return
+	}
+	_, file, line, _ := runtime.Caller(1)
+	errStr := fmt.Sprintf("%s\n\t%s : %d", err.Error(), file, line)
 	panic(Err{errType, errStr})
 }
 
-func CheckError(err error, errType string) {
-	if err != nil {
-		if errType == "" {
-			errType = "err_internal"
-		}
-		SendError(errType, fmt.Sprintf("%v", err))
-	}
+func SendError(errType, errStr string) {
+	_, file, line, _ := runtime.Caller(1)
+	errStr = fmt.Sprintf("%s\n\t%s : %d", errStr, file, line)
+	panic(Err{errType, errStr})
 }
+
+//func CheckError(err error, errType string) {
+//	if err != nil {
+//		if errType == "" {
+//			errType = "err_internal"
+//		}
+//		SendError(errType, fmt.Sprintf("%v", err))
+//	}
+//}
 
 func CheckMathod(r *http.Request, method string) {
 	if r.Method != method {
@@ -79,7 +100,7 @@ func CheckMathod(r *http.Request, method string) {
 func DecodeRequestBody(r *http.Request, v interface{}) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(v)
-	CheckError(err, "err_decode_body")
+	CheckError("err_decode_body", err)
 }
 
 func WriteResponse(w http.ResponseWriter, v interface{}) {
@@ -95,7 +116,7 @@ func Sha224(s string) string {
 
 func GenUUID() string {
 	uuid, err := uuid.NewV4()
-	CheckError(err, "")
+	CheckError("", err)
 	return base64.URLEncoding.EncodeToString(uuid[:])
 }
 
@@ -123,7 +144,7 @@ func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duratio
 		if rdsfp == fingerprint {
 			// it's mine
 			_, err := rc.Do("expire", redisKey, int64(interval.Seconds())+1)
-			CheckError(err, "")
+			CheckError("", err)
 			f()
 			time.Sleep(interval)
 			continue
@@ -131,7 +152,7 @@ func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duratio
 			// takeup
 			if rdsfp == "" {
 				_, err := rc.Do("setex", redisKey, int64(interval.Seconds())+1, fingerprint)
-				CheckError(err, "")
+				CheckError("", err)
 				f()
 				time.Sleep(interval)
 				continue
@@ -336,10 +357,10 @@ func GetStructFieldValues(data interface{}) ([]interface{}, error) {
 
 func NewErr(err error) error {
 	_, file, line, _ := runtime.Caller(1)
-	return errors.New(fmt.Sprintf("Error: %s\n\tFile: %s, Line:%d", err.Error(), file, line))
+	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err.Error(), file, line))
 }
 
 func NewErrStr(err string) error {
 	_, file, line, _ := runtime.Caller(1)
-	return errors.New(fmt.Sprintf("Error: %s\n\tFile: %s, Line:%d", err, file, line))
+	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err, file, line))
 }
