@@ -67,7 +67,7 @@ func PanicIfError(err error) {
 	}
 }
 
-func CheckError(errType string, err error) {
+func CheckError(err error, errType string) {
 	if err == nil {
 		return
 	}
@@ -100,7 +100,7 @@ func CheckMathod(r *http.Request, method string) {
 func DecodeRequestBody(r *http.Request, v interface{}) {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(v)
-	CheckError("err_decode_body", err)
+	CheckError(err, "err_decode_body")
 }
 
 func WriteResponse(w http.ResponseWriter, v interface{}) {
@@ -116,7 +116,7 @@ func Sha224(s string) string {
 
 func GenUUID() string {
 	uuid, err := uuid.NewV4()
-	CheckError("", err)
+	CheckError(err, "")
 	return base64.URLEncoding.EncodeToString(uuid[:])
 }
 
@@ -144,7 +144,7 @@ func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duratio
 		if rdsfp == fingerprint {
 			// it's mine
 			_, err := rc.Do("expire", redisKey, int64(interval.Seconds())+1)
-			CheckError("", err)
+			CheckError(err, "")
 			f()
 			time.Sleep(interval)
 			continue
@@ -152,7 +152,7 @@ func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duratio
 			// takeup
 			if rdsfp == "" {
 				_, err := rc.Do("setex", redisKey, int64(interval.Seconds())+1, fingerprint)
-				CheckError("", err)
+				CheckError(err, "")
 				f()
 				time.Sleep(interval)
 				continue
