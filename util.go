@@ -294,6 +294,95 @@ func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
 	return nil
 }
 
+func LoadCsvArray(file string, slicePtr interface{}) (err error) {
+	//type check
+	value := reflect.ValueOf(slicePtr).Elem()
+	if value.Kind() != reflect.Slice {
+		return NewErrStr("arg slice must be slice type")
+	}
+
+	elemType := value.Type().Elem()
+	if elemType.Kind() != reflect.Struct {
+		return NewErrStr("arg slice must be slice of struct")
+	}
+
+	//parse csv
+	f, err := os.Open(file)
+	if err != nil {
+		return NewErr(err)
+	}
+	defer f.Close()
+
+	reader := csv.NewReader(f)
+
+	//read first row
+	firstrow, err := reader.Read()
+	if err != nil {
+		return NewErr(err)
+	}
+
+	//
+	elems := reflect.MakeSlice(value.Type(), 0, 16)
+
+	row, err := reader.Read()
+	for irow := 0; row != nil; irow++ {
+		if err != nil {
+			return NewErr(err)
+		}
+		rowobjValue := reflect.New(elemType).Elem()
+		numField := rowobjValue.NumField()
+		for i := 0; i < numField; i++ {
+			f := rowobjValue.Field(i)
+			colname := rowobjValue.Type().Field(i).Name
+
+			colidx := -1
+			for i, v := range firstrow {
+				if strings.EqualFold(colname, v) {
+					colidx = i
+					break
+				}
+			}
+			if colidx != -1 {
+				valstr := row[colidx]
+				switch f.Kind() {
+				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+					n, err := strconv.ParseInt(valstr, 0, 64)
+					if err != nil {
+						return NewErr(err)
+					}
+					f.SetInt(n)
+				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+					n, err := strconv.ParseUint(valstr, 0, 64)
+					if err != nil {
+						return NewErr(err)
+					}
+					f.SetUint(n)
+				case reflect.Float32, reflect.Float64:
+					n, err := strconv.ParseFloat(valstr, 64)
+					if err != nil {
+						return NewErr(err)
+					}
+					f.SetFloat(n)
+				case reflect.Bool:
+					n, err := strconv.ParseBool(valstr)
+					if err != nil {
+						return NewErr(err)
+					}
+					f.SetBool(n)
+				case reflect.String:
+					f.SetString(valstr)
+				}
+			}
+		}
+		elems = reflect.Append(elems, rowobjValue)
+		row, err = reader.Read()
+	}
+
+	value.Set(elems)
+
+	return nil
+}
+
 func GetStructFieldKVs(data interface{}) ([]string, []interface{}, error) {
 	value := reflect.ValueOf(data)
 	if value.Kind() != reflect.Struct {
