@@ -61,6 +61,10 @@ func (fn ReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fn(w, r)
 }
 
+func HttpTest(handler ReqHandler, w http.ResponseWriter, req *http.Request) {
+	ReqHandler(handler).ServeHTTP(w, req)
+}
+
 func PanicIfError(err error) {
 	if err != nil {
 		panic(err)
@@ -97,10 +101,10 @@ func CheckMathod(r *http.Request, method string) {
 	}
 }
 
-func DecodeRequestBody(r *http.Request, v interface{}) {
+func DecodeRequestBody(r *http.Request, v interface{}) error {
 	decoder := json.NewDecoder(r.Body)
 	err := decoder.Decode(v)
-	CheckError(err, "err_decode_body")
+	return err
 }
 
 func WriteResponse(w http.ResponseWriter, v interface{}) {
