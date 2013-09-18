@@ -21,9 +21,32 @@ import (
 	"time"
 )
 
+var (
+	timeDiff int64
+)
+
 type Err struct {
 	Error       string
 	ErrorString string
+}
+
+func init() {
+	c, err := redis.Dial("tcp", "localhost:6379")
+	PanicIfError(err)
+	defer c.Close()
+
+	t, err := redis.Values(c.Do("time"))
+	PanicIfError(err)
+	var sec int64
+	_, err = redis.Scan(t, &sec)
+	PanicIfError(err)
+
+	timeDiff = sec - time.Now().Unix()
+}
+
+//unix second
+func GetRedisTime() int64 {
+	return time.Now().Unix() + timeDiff
 }
 
 func handleError(w http.ResponseWriter) {
@@ -456,4 +479,8 @@ func NewErr(err error) error {
 func NewErrStr(err string) error {
 	_, file, line, _ := runtime.Caller(1)
 	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err, file, line))
+}
+
+func GetUnixTime() {
+
 }
