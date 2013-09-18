@@ -59,6 +59,9 @@ func handleError(w http.ResponseWriter) {
 			err = r.(Err)
 		default:
 			err = Err{"", fmt.Sprintf("%v", r)}
+			buf := make([]byte, 2048)
+			runtime.Stack(buf, false)
+			glog.Errorf("%v\n%s\n", r, buf)
 		}
 
 		if err.Error == "" {
@@ -68,9 +71,6 @@ func handleError(w http.ResponseWriter) {
 			w.WriteHeader(http.StatusBadRequest)
 		}
 
-		//buf := make([]byte, 1024)
-		//runtime.Stack(buf, false)
-		//glog.Errorf("%v\n%s\n", r, buf)
 		glog.Errorln(r)
 
 		encoder.Encode(&err)
