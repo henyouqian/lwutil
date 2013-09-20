@@ -141,6 +141,12 @@ func Sha224(s string) string {
 	return base64.URLEncoding.EncodeToString(hasher.Sum(nil))
 }
 
+func Sha256(s string) string {
+	hasher := sha256.New()
+	hasher.Write([]byte(s))
+	return base64.URLEncoding.EncodeToString(hasher.Sum(nil))
+}
+
 func GenUUID() string {
 	uuid, err := uuid.NewV4()
 	CheckError(err, "")
@@ -155,14 +161,18 @@ func EndTx(tx *sql.Tx, err *error) {
 	}
 }
 
-func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duration, f func()) {
+func opendb(dbname string) (*sql.DB, error) {
+	db, err := sql.Open("mysql", fmt.Sprintf("root@/%s?parseTime=true", dbname))
+	if err != nil {
+		err = NewErr(err)
+	}
+	return db, err
+}
+
+//use go keyword to run
+func RepeatSingletonTask(redisPool *redis.Pool, key string, f func()) {
 	rc := redisPool.Get()
 	defer rc.Close()
-
-	intervalMin := 10 * time.Millisecond
-	if interval < intervalMin {
-		interval = intervalMin
-	}
 
 	fingerprint := GenUUID()
 	redisKey := fmt.Sprintf("locker/%s", key)
@@ -170,18 +180,18 @@ func RepeatSingletonTask(redisPool redis.Pool, key string, interval time.Duratio
 		rdsfp, _ := redis.String(rc.Do("get", redisKey))
 		if rdsfp == fingerprint {
 			// it's mine
-			_, err := rc.Do("expire", redisKey, int64(interval.Seconds())+1)
+			_, err := rc.Do("expire", redisKey, 2)
 			CheckError(err, "")
 			f()
-			time.Sleep(interval)
+			runtime.Gosched()
 			continue
 		} else {
 			// takeup
 			if rdsfp == "" {
-				_, err := rc.Do("setex", redisKey, int64(interval.Seconds())+1, fingerprint)
+				_, err := rc.Do("setex", redisKey, 2, fingerprint)
 				CheckError(err, "")
 				f()
-				time.Sleep(interval)
+				runtime.Gosched()
 				continue
 			}
 		}
@@ -472,6 +482,9 @@ func GetStructFieldValues(data interface{}) ([]interface{}, error) {
 }
 
 func NewErr(err error) error {
+	if err == nil {
+		return nil
+	}
 	_, file, line, _ := runtime.Caller(1)
 	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err.Error(), file, line))
 }
@@ -479,8 +492,4 @@ func NewErr(err error) error {
 func NewErrStr(err string) error {
 	_, file, line, _ := runtime.Caller(1)
 	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err, file, line))
-}
-
-func GetUnixTime() {
-
 }
