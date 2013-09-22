@@ -169,7 +169,7 @@ func opendb(dbname string) (*sql.DB, error) {
 	return db, err
 }
 
-//use go keyword to run
+//use go keyword to start a goroutine
 func RepeatSingletonTask(redisPool *redis.Pool, key string, f func()) {
 	rc := redisPool.Get()
 	defer rc.Close()

@@ -18,7 +18,7 @@ var (
 )
 
 const (
-	CACHE_LIFE_SEC = 2
+	CACHE_LIFE_SEC = 3600
 	SCRIPT_SET_KV  = `
 		redis.call('set', 'kv/'..KEYS[1], KEYS[2])
 		redis.call('zadd', 'kvz', KEYS[3], 'kv/'..KEYS[1])
@@ -159,6 +159,7 @@ func saveToDBTask() {
 
 			for i := 0; i < len(delobjs)/2; i++ {
 				k := delobjs[i*2]
+				k = k.([]uint8)[3:]
 				v := delobjs[i*2+1]
 				_, err := stmt.Exec(k, v)
 				if err != nil {
