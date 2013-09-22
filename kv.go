@@ -161,7 +161,6 @@ func saveToDBTask() {
 				k := delobjs[i*2]
 				k = k.([]uint8)[3:]
 				v := delobjs[i*2+1]
-				glog.Infoln(k)
 				_, err := stmt.Exec(k, v)
 				if err != nil {
 					return NewErr(err)
