@@ -45,7 +45,11 @@ func init() {
 }
 
 //unix second
-func GetRedisTime() int64 {
+func GetRedisTime() time.Time {
+	return time.Now().Add(time.Duration(timeDiff) * time.Second)
+}
+
+func GetRedisTimeUnix() int64 {
 	return time.Now().Unix() + timeDiff
 }
 
@@ -224,6 +228,7 @@ func Truncate(v, min, max int64) int64 {
 	return v
 }
 
+//use "key1,key2" for multi column key
 func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
 	f, err := os.Open(file)
 	if err != nil {

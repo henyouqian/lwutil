@@ -73,7 +73,7 @@ func SetKV(key string, value []byte, rc redis.Conn) error {
 		rc = redisPool.Get()
 		defer rc.Close()
 	}
-	expireTime := GetRedisTime() + CACHE_LIFE_SEC
+	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
 
 	err := cmdSetKV.SendHash(rc, key, value, expireTime)
 	return NewErr(err)
@@ -105,7 +105,7 @@ func GetKV(key string, rc redis.Conn) ([]byte, error) {
 	}
 
 	// write to redis
-	expireTime := GetRedisTime() + CACHE_LIFE_SEC
+	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
 	err = cmdSetKV.SendHash(rc, key, value, expireTime)
 
 	//
