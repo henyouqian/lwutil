@@ -22,7 +22,9 @@ import (
 )
 
 var (
-	timeDiff int64
+	timeDiff                    int64
+	HttpCodeInternalServerError = http.StatusInternalServerError
+	HttpCodeBadRequest          = http.StatusBadRequest
 )
 
 type Err struct {
@@ -70,9 +72,9 @@ func handleError(w http.ResponseWriter) {
 
 		if err.Error == "" {
 			err.Error = "err_internal"
-			w.WriteHeader(http.StatusInternalServerError)
+			w.WriteHeader(HttpCodeInternalServerError)
 		} else {
-			w.WriteHeader(http.StatusBadRequest)
+			w.WriteHeader(HttpCodeBadRequest)
 		}
 
 		glog.Errorln(r)
