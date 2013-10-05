@@ -2,6 +2,7 @@ package lwutil
 
 import (
 	"database/sql"
+	"encoding/json"
 	"github.com/garyburd/redigo/redis"
 	"github.com/golang/glog"
 	"time"
@@ -112,10 +113,63 @@ func GetKV(key string, rc redis.Conn) ([]byte, error) {
 	return value, NewErr(err)
 }
 
-func DelKV(key string) error {
-	_, err := kvDB.Exec("DELETE FROM kvs WHERE k=?", key)
+func SetKV2(key string, value interface{}, rc redis.Conn) error {
+	if rc == nil {
+		rc = redisPool.Get()
+		defer rc.Close()
+	}
+	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
+
+	bt, err := json.Marshal(value)
+
+	err = cmdSetKV.SendHash(rc, key, bt, expireTime)
 	return NewErr(err)
 }
+
+var ErrNoRows = NewErrStr("no rows")
+
+func GetKV2(key string, out interface{}, rc redis.Conn) error {
+	if rc == nil {
+		rc = redisPool.Get()
+		defer rc.Close()
+	}
+
+	v, err := rc.Do("get", "kv/"+key)
+	if err != nil {
+		return NewErr(err)
+	}
+
+	var bytes []byte
+	if v != nil {
+		bytes, err = redis.Bytes(v, err)
+		if err != nil {
+			return NewErr(err)
+		}
+	} else {
+		//if cache miss, select from db
+		row := kvDB.QueryRow("SELECT v FROM kvs WHERE k=?", key)
+		err = row.Scan(&bytes)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				return ErrNoRows
+			} else {
+				return NewErr(err)
+			}
+		}
+		// write to redis
+		expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
+		err = cmdSetKV.SendHash(rc, key, bytes, expireTime)
+	}
+
+	//out
+	err = json.Unmarshal(bytes, out)
+	return NewErr(err)
+}
+
+//func DelKV(key string) error {
+//	_, err := kvDB.Exec("DELETE FROM kvs WHERE k=?", key)
+//	return NewErr(err)
+//}
 
 func saveToDBTask() {
 	//glog.Infoln("saveToDBTask")
