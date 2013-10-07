@@ -275,9 +275,11 @@ func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
 	}
 
 	row, err := reader.Read()
+	iRow := 1
 	for row != nil {
+		iRow++
 		rowobjValue := reflect.New(rowObjType).Elem()
-		numField := rowobjValue.NumField()
+		numField := rowObjType.NumField()
 		for i := 0; i < numField; i++ {
 			f := rowobjValue.Field(i)
 			colname := rowobjValue.Type().Field(i).Name
@@ -291,6 +293,9 @@ func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
 			}
 			if colidx != -1 {
 				valstr := row[colidx]
+				if valstr == "" {
+					return NewErrStr(fmt.Sprintf("empty field: row=%d, field=%s", iRow, colname))
+				}
 				switch f.Kind() {
 				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 					n, err := strconv.ParseInt(valstr, 0, 64)
@@ -319,6 +324,8 @@ func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
 				case reflect.String:
 					f.SetString(valstr)
 				}
+			} else {
+				glog.Errorf("col not found: file=%s, col=%s, struct=%s", file, colname, rowObjType.Name())
 			}
 		}
 

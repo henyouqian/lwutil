@@ -139,12 +139,20 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 		return NewErr(err)
 	}
 
+	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
 	var bytes []byte
 	if v != nil {
 		bytes, err = redis.Bytes(v, err)
 		if err != nil {
 			return NewErr(err)
 		}
+
+		//update ttl
+		_, err = rc.Do("zadd", "kvz", expireTime, "kv/"+key)
+		if err != nil {
+			return NewErr(err)
+		}
+
 	} else {
 		//if cache miss, select from db
 		row := kvDB.QueryRow("SELECT v FROM kvs WHERE k=?", key)
@@ -156,8 +164,7 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 				return NewErr(err)
 			}
 		}
-		// write to redis
-		expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
+		//write to redis
 		err = cmdSetKV.SendHash(rc, key, bytes, expireTime)
 	}
 
@@ -177,7 +184,7 @@ func saveToDBTask() {
 	rc := redisPool.Get()
 	defer rc.Close()
 
-	redisTime := GetRedisTime()
+	redisTime := GetRedisTimeUnix()
 
 	//get expired
 	err := cmdGetExpiredKV.SendHash(rc, redisTime)
