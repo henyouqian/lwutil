@@ -231,115 +231,249 @@ func Truncate(v, min, max int64) int64 {
 }
 
 //use "key1,key2" for multi column key
-func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
+//mapPtr must be *map[string]struct
+func LoadCsvMap(file string, keyCols []string, mapPtr interface{}) (err error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return NewErr(err)
 	}
 	defer f.Close()
 
-	//
-	v := reflect.ValueOf(tbl).Elem()
-	defer func() {
-		if r := recover(); r != nil {
-			err = NewErrStr(fmt.Sprintf("tbl's type must be map[string]struct. detail:%v", r))
+	//check mapPtr's type
+	typeOk := false
+	mapPtrType := reflect.TypeOf(mapPtr)
+	var structType reflect.Type
+	if mapPtrType.Kind() == reflect.Ptr {
+		t := mapPtrType.Elem()
+		if t.Kind() == reflect.Map {
+			kt := t.Key()
+			structType = t.Elem()
+			if kt.Kind() == reflect.String && structType.Kind() == reflect.Struct {
+				typeOk = true
+			}
 		}
-	}()
-
-	t := v.Type()
-	if v.IsNil() {
-		v.Set(reflect.MakeMap(t))
 	}
-	rowObjType := t.Elem()
+	if !typeOk {
+		return NewErrStr(fmt.Sprintf("input type must be ptr of map[string]struct. inputType=%s", mapPtrType.Name()))
+	}
 
-	//
+	//if map is nil, make map
+	mapValue := reflect.ValueOf(mapPtr).Elem()
+	if mapValue.IsNil() {
+		mapValue.Set(reflect.MakeMap(mapValue.Type()))
+	}
+
+	//read csv header
 	reader := csv.NewReader(f)
-	firstrow, err := reader.Read()
-	keycolidxs := make([]int, len(keycols))
-	for icol, vcol := range keycols {
+	firstRow, err := reader.Read()
+	if err != nil {
+		return NewErr(err)
+	}
+
+	// key column index
+	keyColIdxs := make([]int, len(keyCols))
+	for icol, vcol := range keyCols {
 		found := false
-		for i, v := range firstrow {
+		for i, v := range firstRow {
 			if strings.EqualFold(v, vcol) {
-				keycolidxs[icol] = i
+				keyColIdxs[icol] = i
 				found = true
 				break
 			}
 		}
 		if !found {
-			return NewErrStr(fmt.Sprintf("column not found: %s in %s", vcol, file))
+			return NewErrStr(fmt.Sprintf("key column not found: %s in %s", vcol, file))
+		}
+	}
+	if len(keyColIdxs) != len(keyCols) {
+		return NewErrStr(fmt.Sprintf("keys not match totally: keyCols = %v", keyCols))
+	}
+
+	// struct field column index
+	numField := structType.NumField()
+	fieldColIdxs := make([]int, numField)
+	for iField := 0; iField < numField; iField++ {
+		field := structType.Field(iField)
+		colName := field.Tag.Get("csv")
+		if colName == "" {
+			colName = field.Name
+		}
+
+		found := false
+		for i, v := range firstRow {
+			if strings.EqualFold(v, colName) {
+				fieldColIdxs[iField] = i
+				found = true
+				break
+			}
+		}
+		if !found {
+			return NewErrStr(fmt.Sprintf("field column not found: %s in %s", colName, file))
 		}
 	}
 
-	if len(keycolidxs) != len(keycols) {
-		return NewErrStr(fmt.Sprintf("keys not match totally: keycols = %v", keycols))
-	}
-
-	row, err := reader.Read()
+	//fill the map
+	rowStrs, err := reader.Read()
 	iRow := 1
-	for row != nil {
+	for rowStrs != nil {
 		iRow++
-		rowobjValue := reflect.New(rowObjType).Elem()
-		numField := rowObjType.NumField()
+		structValue := reflect.New(structType).Elem()
 		for i := 0; i < numField; i++ {
-			f := rowobjValue.Field(i)
-			colname := rowobjValue.Type().Field(i).Name
+			colIdx := fieldColIdxs[i]
+			valstr := rowStrs[colIdx]
+			fieldValue := structValue.Field(i)
 
-			colidx := -1
-			for i, v := range firstrow {
-				if strings.EqualFold(colname, v) {
-					colidx = i
-					break
+			switch fieldValue.Kind() {
+			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+				n, err := strconv.ParseInt(valstr, 0, 64)
+				if err != nil {
+					return NewErrStr(fmt.Sprintf("file=%s, row=%d, col=%s, error=%s", file, iRow, firstRow[colIdx], err.Error()))
 				}
-			}
-			if colidx != -1 {
-				valstr := row[colidx]
-				if valstr == "" {
-					return NewErrStr(fmt.Sprintf("empty field: row=%d, field=%s", iRow, colname))
+				fieldValue.SetInt(n)
+			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+				n, err := strconv.ParseUint(valstr, 0, 64)
+				if err != nil {
+					return NewErrStr(fmt.Sprintf("file=%s, row=%d, col=%s, error=%s", file, iRow, firstRow[colIdx], err.Error()))
 				}
-				switch f.Kind() {
-				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-					n, err := strconv.ParseInt(valstr, 0, 64)
-					if err != nil {
-						return NewErr(err)
-					}
-					f.SetInt(n)
-				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-					n, err := strconv.ParseUint(valstr, 0, 64)
-					if err != nil {
-						return NewErr(err)
-					}
-					f.SetUint(n)
-				case reflect.Float32, reflect.Float64:
-					n, err := strconv.ParseFloat(valstr, 64)
-					if err != nil {
-						return NewErr(err)
-					}
-					f.SetFloat(n)
-				case reflect.Bool:
-					n, err := strconv.ParseBool(valstr)
-					if err != nil {
-						return NewErr(err)
-					}
-					f.SetBool(n)
-				case reflect.String:
-					f.SetString(valstr)
+				fieldValue.SetUint(n)
+			case reflect.Float32, reflect.Float64:
+				n, err := strconv.ParseFloat(valstr, 64)
+				if err != nil {
+					return NewErrStr(fmt.Sprintf("file=%s, row=%d, col=%s, error=%s", file, iRow, firstRow[colIdx], err.Error()))
 				}
-			} else {
-				glog.Errorf("col not found: file=%s, col=%s, struct=%s", file, colname, rowObjType.Name())
+				fieldValue.SetFloat(n)
+			case reflect.Bool:
+				n, err := strconv.ParseBool(valstr)
+				if err != nil {
+					return NewErrStr(fmt.Sprintf("file=%s, row=%d, col=%s, error=%s", file, iRow, firstRow[colIdx], err.Error()))
+				}
+				fieldValue.SetBool(n)
+			case reflect.String:
+				fieldValue.SetString(valstr)
 			}
 		}
 
-		keys := make([]string, len(keycolidxs))
-		for i, v := range keycolidxs {
-			keys[i] = row[v]
+		keys := make([]string, len(keyColIdxs))
+		for i, v := range keyColIdxs {
+			keys[i] = rowStrs[v]
 		}
-		v.SetMapIndex(reflect.ValueOf(strings.Join(keys, ",")), rowobjValue)
+		mapValue.SetMapIndex(reflect.ValueOf(strings.Join(keys, ",")), structValue)
 
-		row, err = reader.Read()
+		rowStrs, err = reader.Read()
 	}
 
 	return nil
 }
+
+////use "key1,key2" for multi column key
+//func LoadCsvTbl(file string, keycols []string, tbl interface{}) (err error) {
+//	f, err := os.Open(file)
+//	if err != nil {
+//		return NewErr(err)
+//	}
+//	defer f.Close()
+
+//	//
+//	v := reflect.ValueOf(tbl).Elem()
+//	defer func() {
+//		if r := recover(); r != nil {
+//			err = NewErrStr(fmt.Sprintf("tbl's type must be map[string]struct. detail:%v", r))
+//		}
+//	}()
+
+//	t := v.Type()
+//	if v.IsNil() {
+//		v.Set(reflect.MakeMap(t))
+//	}
+//	rowObjType := t.Elem()
+
+//	//
+//	reader := csv.NewReader(f)
+//	firstrow, err := reader.Read()
+//	keycolidxs := make([]int, len(keycols))
+//	for icol, vcol := range keycols {
+//		found := false
+//		for i, v := range firstrow {
+//			if strings.EqualFold(v, vcol) {
+//				keycolidxs[icol] = i
+//				found = true
+//				break
+//			}
+//		}
+//		if !found {
+//			return NewErrStr(fmt.Sprintf("column not found: %s in %s", vcol, file))
+//		}
+//	}
+
+//	if len(keycolidxs) != len(keycols) {
+//		return NewErrStr(fmt.Sprintf("keys not match totally: keycols = %v", keycols))
+//	}
+
+//	row, err := reader.Read()
+//	iRow := 1
+//	for row != nil {
+//		iRow++
+//		rowobjValue := reflect.New(rowObjType).Elem()
+//		numField := rowObjType.NumField()
+//		for i := 0; i < numField; i++ {
+//			f := rowobjValue.Field(i)
+//			colname := rowObjType.Field(i).Name
+//			colidx := -1
+//			for i, v := range firstrow {
+//				if strings.EqualFold(colname, v) {
+//					colidx = i
+//					break
+//				}
+//			}
+//			if colidx != -1 {
+//				valstr := row[colidx]
+//				if valstr == "" {
+//					return NewErrStr(fmt.Sprintf("empty field: row=%d, field=%s", iRow, colname))
+//				}
+//				switch f.Kind() {
+//				case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+//					n, err := strconv.ParseInt(valstr, 0, 64)
+//					if err != nil {
+//						return NewErr(err)
+//					}
+//					f.SetInt(n)
+//				case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+//					n, err := strconv.ParseUint(valstr, 0, 64)
+//					if err != nil {
+//						return NewErr(err)
+//					}
+//					f.SetUint(n)
+//				case reflect.Float32, reflect.Float64:
+//					n, err := strconv.ParseFloat(valstr, 64)
+//					if err != nil {
+//						return NewErr(err)
+//					}
+//					f.SetFloat(n)
+//				case reflect.Bool:
+//					n, err := strconv.ParseBool(valstr)
+//					if err != nil {
+//						return NewErr(err)
+//					}
+//					f.SetBool(n)
+//				case reflect.String:
+//					f.SetString(valstr)
+//				}
+//			} else {
+//				glog.Errorf("col not found: file=%s, col=%s, struct=%s", file, colname, rowObjType.Name())
+//			}
+//		}
+
+//		keys := make([]string, len(keycolidxs))
+//		for i, v := range keycolidxs {
+//			keys[i] = row[v]
+//		}
+//		v.SetMapIndex(reflect.ValueOf(strings.Join(keys, ",")), rowobjValue)
+
+//		row, err = reader.Read()
+//	}
+
+//	return nil
+//}
 
 func LoadCsvArray(file string, slicePtr interface{}) (err error) {
 	//type check
