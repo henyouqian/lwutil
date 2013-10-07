@@ -120,7 +120,10 @@ func SetKV2(key string, value interface{}, rc redis.Conn) error {
 	}
 	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
 
-	bt, err := json.Marshal(value)
+	bt, err := json.Marshal(&value)
+	if err != nil {
+		return NewErr(err)
+	}
 
 	err = cmdSetKV.SendHash(rc, key, bt, expireTime)
 	return NewErr(err)
