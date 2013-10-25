@@ -46,7 +46,6 @@ func init() {
 	timeDiff = sec - time.Now().Unix()
 }
 
-//unix second
 func GetRedisTime() time.Time {
 	return time.Now().Add(time.Duration(timeDiff) * time.Second)
 }

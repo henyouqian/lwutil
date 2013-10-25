@@ -25,7 +25,7 @@ const (
 		redis.call('zadd', 'kvz', KEYS[3], 'kv/'..KEYS[1])
 	`
 	SCRIPT_GET_EXPIRED_KV = `
-		local r1 = redis.pcall('ZRANGEBYSCORE', 'kvz', 0, KEYS[1], "LIMIT", 0, 1000)
+		local r1 = redis.pcall('ZRANGEBYSCORE', 'kvz', 0, KEYS[1], "LIMIT", 0, 100)
 		local r2 = redis.pcall('mget', unpack(r1))
 		local r = {}
 		for i, v in ipairs(r1) do
@@ -36,7 +36,7 @@ const (
 	`
 
 	SCRIPT_GETDEL = `
-		local r = redis.call('ZRANGEBYSCORE', 'kvz', 0, KEYS[1], "LIMIT", 0, 1000)
+		local r = redis.call('ZRANGEBYSCORE', 'kvz', 0, KEYS[1], "LIMIT", 0, 100)
 		redis.pcall('zrem', 'kvz', unpack(r))
 		redis.pcall('del', unpack(r))
 		return #(r)
@@ -69,51 +69,7 @@ func StartKV(db *sql.DB, pool *redis.Pool) {
 	go RepeatSingletonTask(redisPool, "kvSaveToDbTask", saveToDBTask)
 }
 
-func SetKV(key string, value []byte, rc redis.Conn) error {
-	if rc == nil {
-		rc = redisPool.Get()
-		defer rc.Close()
-	}
-	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
-
-	err := cmdSetKV.SendHash(rc, key, value, expireTime)
-	return NewErr(err)
-}
-
-func GetKV(key string, rc redis.Conn) ([]byte, error) {
-	if rc == nil {
-		rc = redisPool.Get()
-		defer rc.Close()
-	}
-
-	v, err := rc.Do("get", "kv/"+key)
-	if v != nil {
-		s, err := redis.Bytes(v, err)
-		return s, NewErr(err)
-	}
-
-	//if cache miss
-	// select from db
-	row := kvDB.QueryRow("SELECT v FROM kvs WHERE k=?", key)
-	var value []byte
-	err = row.Scan(&value)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		} else {
-			return nil, NewErr(err)
-		}
-	}
-
-	// write to redis
-	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
-	err = cmdSetKV.SendHash(rc, key, value, expireTime)
-
-	//
-	return value, NewErr(err)
-}
-
-func SetKV2(key string, value interface{}, rc redis.Conn) error {
+func SetKv(key string, value interface{}, rc redis.Conn) error {
 	if rc == nil {
 		rc = redisPool.Get()
 		defer rc.Close()
@@ -129,9 +85,7 @@ func SetKV2(key string, value interface{}, rc redis.Conn) error {
 	return NewErr(err)
 }
 
-var ErrNoRows = NewErrStr("no rows")
-
-func GetKV2(key string, out interface{}, rc redis.Conn) error {
+func GetKv(key string, out interface{}, rc redis.Conn) (exist bool, err error) {
 	if rc == nil {
 		rc = redisPool.Get()
 		defer rc.Close()
@@ -139,7 +93,7 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 
 	v, err := rc.Do("get", "kv/"+key)
 	if err != nil {
-		return NewErr(err)
+		return false, NewErr(err)
 	}
 
 	expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
@@ -147,13 +101,13 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 	if v != nil {
 		bytes, err = redis.Bytes(v, err)
 		if err != nil {
-			return NewErr(err)
+			return false, NewErr(err)
 		}
 
 		//update ttl
 		_, err = rc.Do("zadd", "kvz", expireTime, "kv/"+key)
 		if err != nil {
-			return NewErr(err)
+			return false, NewErr(err)
 		}
 
 	} else {
@@ -162,9 +116,9 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 		err = row.Scan(&bytes)
 		if err != nil {
 			if err == sql.ErrNoRows {
-				return ErrNoRows
+				return false, nil
 			} else {
-				return NewErr(err)
+				return false, NewErr(err)
 			}
 		}
 		//write to redis
@@ -173,7 +127,31 @@ func GetKV2(key string, out interface{}, rc redis.Conn) error {
 
 	//out
 	err = json.Unmarshal(bytes, out)
+	return err == nil, NewErr(err)
+}
+
+func SetKvDb(key string, value interface{}) error {
+	bts, err := json.Marshal(&value)
+	if err != nil {
+		return NewErr(err)
+	}
+	_, err = kvDB.Exec("REPLACE INTO kvs (k, v) VALUES(?, ?)", key, bts)
 	return NewErr(err)
+}
+
+func GetKvDb(key string, out interface{}) (exist bool, err error) {
+	row := kvDB.QueryRow("SELECT v FROM kvs WHERE k=?", key)
+	var bytes []byte
+	err = row.Scan(&bytes)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		} else {
+			return false, NewErr(err)
+		}
+	}
+	err = json.Unmarshal(bytes, out)
+	return err == nil, NewErr(err)
 }
 
 //func DelKV(key string) error {
