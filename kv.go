@@ -3,8 +3,10 @@ package lwutil
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"github.com/garyburd/redigo/redis"
 	"github.com/golang/glog"
+	"reflect"
 	"time"
 )
 
@@ -152,6 +154,126 @@ func GetKvDb(key string, out interface{}) (exist bool, err error) {
 	}
 	err = json.Unmarshal(bytes, out)
 	return err == nil, NewErr(err)
+}
+
+type Hkv struct {
+	TableName string
+	KeyName   string
+	KeyValue  interface{}
+	Value     interface{}
+	Error     error
+}
+
+func HGetKvs(hkvs []Hkv) error {
+	rc := redisPool.Get()
+	defer rc.Close()
+
+	for _, hkv := range hkvs {
+		vValue := reflect.ValueOf(hkv.Value)
+		if vValue.Kind() == reflect.Ptr {
+			vValue = vValue.Elem()
+		}
+		if vValue.Kind() != reflect.Struct {
+			return NewErrStr("err_not_struct")
+		}
+
+		numField := vValue.NumField()
+		args := make([]interface{}, 0, numField+1)
+
+		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
+		args = append(args, key)
+
+		vType := vValue.Type()
+		for i := 0; i < numField; i++ {
+			args = append(args, vType.Field(i).Name)
+		}
+
+		rc.Send("hmget", args...)
+	}
+	err := rc.Flush()
+	if err != nil {
+		return NewErr(err)
+	}
+
+	for _, hkv := range hkvs {
+		_ = hkv
+	}
+
+	return nil
+}
+
+func HSetKvs(hkvs []Hkv) error {
+	rc := redisPool.Get()
+	defer rc.Close()
+
+	for _, hkv := range hkvs {
+		vValue := reflect.ValueOf(hkv.Value)
+		if vValue.Kind() == reflect.Ptr {
+			vValue = vValue.Elem()
+		}
+		if vValue.Kind() != reflect.Struct {
+			return NewErrStr("err_not_struct")
+		}
+
+		numField := vValue.NumField()
+		args := make([]interface{}, 0, numField*2+5)
+
+		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
+		args = append(args, key)
+		args = append(args, "_kn")
+		args = append(args, hkv.KeyName)
+		args = append(args, "_kv")
+		args = append(args, fmt.Sprintf("%v", hkv.KeyValue))
+
+		vType := vValue.Type()
+		for i := 0; i < numField; i++ {
+			args = append(args, vType.Field(i).Name)
+			args = append(args, vValue.Field(i).Interface())
+		}
+
+		err := rc.Send("hmset", args...)
+		if err != nil {
+			return NewErr(err)
+		}
+	}
+
+	err := rc.Flush()
+	return NewErr(err)
+}
+
+func hSetKv(db *sql.DB, tableName string, keyName string, keyValue interface{}, value interface{}) error {
+	vValue := reflect.ValueOf(value)
+	if vValue.Kind() == reflect.Ptr {
+		vValue = vValue.Elem()
+	}
+	if vValue.Kind() != reflect.Struct {
+		return NewErrStr("err_not_struct")
+	}
+
+	rc := redisPool.Get()
+	defer rc.Close()
+
+	numField := vValue.NumField()
+	args := make([]interface{}, 0, numField*2+3)
+
+	key := fmt.Sprintf("hkv/%s/%v", tableName, keyValue)
+	args = append(args, key)
+	args = append(args, "_k")
+	args = append(args, fmt.Sprintf("%s=%v", keyName, keyValue))
+
+	vType := vValue.Type()
+	for i := 0; i < numField; i++ {
+		args = append(args, vType.Field(i).Name)
+		args = append(args, vValue.Field(i).Interface())
+	}
+
+	_, err := rc.Do("hmset", args...)
+	return NewErr(err)
+}
+
+func hGetKv(db *sql.DB, tableName string, keyName string, keyValue interface{}, value interface{}) error {
+
+	return nil
 }
 
 //func DelKV(key string) error {

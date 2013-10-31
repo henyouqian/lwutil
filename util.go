@@ -12,6 +12,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/golang/glog"
 	"github.com/nu7hatch/gouuid"
+	"io"
 	"net/http"
 	"os"
 	"reflect"
@@ -313,6 +314,9 @@ func LoadCsvMap(file string, keyCols []string, mapPtr interface{}) (err error) {
 
 	//fill the map
 	rowStrs, err := reader.Read()
+	if err != nil {
+		return NewErrStr(fmt.Sprintf("file=%s error=%s", file, err.Error()))
+	}
 	iRow := 1
 	for rowStrs != nil {
 		iRow++
@@ -359,6 +363,9 @@ func LoadCsvMap(file string, keyCols []string, mapPtr interface{}) (err error) {
 		mapValue.SetMapIndex(reflect.ValueOf(strings.Join(keys, ",")), structValue)
 
 		rowStrs, err = reader.Read()
+		if err != nil && err != io.EOF {
+			return NewErrStr(fmt.Sprintf("file=%s, row=%d, error=%s", file, iRow, err.Error()))
+		}
 	}
 
 	return nil
