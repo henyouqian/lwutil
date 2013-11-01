@@ -7,13 +7,14 @@ import (
 	"github.com/garyburd/redigo/redis"
 	"github.com/golang/glog"
 	"reflect"
+	"strings"
 	"time"
 )
 
 const ()
 
 var (
-	kvDB            *sql.DB
+	kvDB            *DB
 	redisPool       *redis.Pool
 	cmdSetKV        *redis.Script
 	cmdGetDel       *redis.Script
@@ -45,7 +46,7 @@ const (
 	`
 )
 
-func StartKV(db *sql.DB, pool *redis.Pool) {
+func StartKV(db *DB, pool *redis.Pool) {
 	kvDB = db
 	redisPool = pool
 
@@ -157,7 +158,7 @@ func GetKvDb(key string, out interface{}) (exist bool, err error) {
 }
 
 type Hkv struct {
-	Db        *Db
+	Db        *DB
 	TableName string
 	KeyName   string
 	KeyValue  interface{}
@@ -165,10 +166,15 @@ type Hkv struct {
 	Error     error
 }
 
+func hMakeKey(dbName, tableName, keyName string, keyValue interface{}) string {
+	return fmt.Sprintf("hkv/[%s,%s,%s,%v]", dbName, tableName, keyName, keyValue)
+}
+
 func HGetKvs(hkvs []Hkv) error {
 	rc := redisPool.Get()
 	defer rc.Close()
 
+	//request
 	for _, hkv := range hkvs {
 		vValue := reflect.ValueOf(hkv.Value)
 		if vValue.Kind() == reflect.Ptr {
@@ -179,13 +185,10 @@ func HGetKvs(hkvs []Hkv) error {
 		}
 
 		numField := vValue.NumField()
-		args := make([]interface{}, 0, numField+4)
+		args := make([]interface{}, 0, numField+1)
 
-		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
+		key := hMakeKey(hkv.Db.Name, hkv.TableName, hkv.KeyName, hkv.KeyValue)
 		args = append(args, key)
-		args = append(args, "_db")
-		args = append(args, "_kn")
-		args = append(args, "_kv")
 
 		vType := vValue.Type()
 		for i := 0; i < numField; i++ {
@@ -199,25 +202,61 @@ func HGetKvs(hkvs []Hkv) error {
 		return NewErr(err)
 	}
 
-	for _, hkv := range hkvs {
-		reply, _ := redis.Values(rc.Receive())
-
+	//deal with reply
+	needWriteToRedis := false
+	for ihkv, hkv := range hkvs {
 		vValue := reflect.ValueOf(hkv.Value)
 		if vValue.Kind() == reflect.Ptr {
 			vValue = vValue.Elem()
 		}
 
 		numField := vValue.NumField()
-		args := make([]interface{}, 0, numField+3)
-		var dbName string
-		args = append(args, &dbName)
-		args = append(args, &hkv.TableName)
-		args = append(args, &hkv.KeyName)
+		args := make([]interface{}, 0, numField)
 		for i := 0; i < numField; i++ {
 			args = append(args, vValue.Field(i).Addr().Interface())
 		}
 
+		reply, _ := redis.Values(rc.Receive())
 		redis.Scan(reply, args...)
+
+		//need query form db?
+		nilFieldNames := make([]string, 0, len(reply))
+		nilFieldItfs := make([]interface{}, 0, len(reply))
+		vType := vValue.Type()
+		for i, r := range reply {
+			if r == nil {
+				nilFieldNames = append(nilFieldNames, vType.Field(i).Name)
+				nilFieldItfs = append(nilFieldItfs, vValue.Field(i).Addr().Interface())
+			}
+		}
+
+		if len(nilFieldNames) != 0 {
+			strSql := fmt.Sprintf("SELECT %s FROM %s WHERE %s=%v",
+				strings.Join(nilFieldNames, ","),
+				hkv.TableName,
+				hkv.KeyName,
+				hkv.KeyValue)
+			err := hkv.Db.QueryRow(strSql).Scan(nilFieldItfs...)
+			if err != nil {
+				hkvs[ihkv].Error = err
+			} else { //if no error, then save to redis
+				var args redis.Args
+				key := hMakeKey(hkv.Db.Name, hkv.TableName, hkv.KeyName, hkv.KeyValue)
+				args = args.Add(key)
+				for i, v := range nilFieldNames {
+					args = args.Add(v)
+					args = args.AddFlat(vValue.Field(i).Interface())
+				}
+				rc.Send("hmset", args...)
+				needWriteToRedis = true
+				glog.Infoln(args...)
+			}
+		}
+	}
+
+	if needWriteToRedis {
+		err = rc.Flush()
+		return NewErr(err)
 	}
 
 	return nil
@@ -237,16 +276,10 @@ func HSetKvs(hkvs []Hkv) error {
 		}
 
 		numField := vValue.NumField()
-		args := make([]interface{}, 0, numField*2+7)
+		args := make([]interface{}, 0, numField*2+1)
 
-		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
+		key := hMakeKey(hkv.Db.Name, hkv.TableName, hkv.KeyName, hkv.KeyValue)
 		args = append(args, key)
-		args = append(args, "_db")
-		args = append(args, hkv.Db.name)
-		args = append(args, "_kn")
-		args = append(args, hkv.KeyName)
-		args = append(args, "_kv")
-		args = append(args, fmt.Sprintf("%v", hkv.KeyValue))
 
 		vType := vValue.Type()
 		for i := 0; i < numField; i++ {
@@ -258,10 +291,30 @@ func HSetKvs(hkvs []Hkv) error {
 		if err != nil {
 			return NewErr(err)
 		}
+
+		//hkvz
+		t := GetRedisTimeUnix()
+		rc.Send("zadd", "hkvz", t, key)
 	}
 
 	err := rc.Flush()
-	return NewErr(err)
+	if err != nil {
+		return NewErr(err)
+	}
+
+	hasError := false
+	for i, _ := range hkvs {
+		_, err = rc.Receive()
+		if err != nil {
+			hasError = true
+		}
+		hkvs[i].Error = err
+	}
+
+	if hasError {
+		return NewErrStr("some error happend, please check error in hkvs")
+	}
+	return nil
 }
 
 func hSetKv(db *sql.DB, tableName string, keyName string, keyValue interface{}, value interface{}) error {

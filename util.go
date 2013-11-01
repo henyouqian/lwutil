@@ -27,7 +27,7 @@ var (
 	HttpCodeInternalServerError = http.StatusInternalServerError
 	HttpCodeBadRequest          = http.StatusBadRequest
 
-	DbMap = make(map[string]*Db)
+	DbMap = make(map[string]*DB)
 )
 
 type Err struct {
@@ -35,18 +35,18 @@ type Err struct {
 	ErrorString string
 }
 
-type Db struct {
+type DB struct {
 	*sql.DB
-	name string
+	Name string
 }
 
-func OpenDb(dbname string) (*Db, error) {
+func OpenDb(dbname string) (*DB, error) {
 	dbRaw, err := sql.Open("mysql", fmt.Sprintf("root@/%s?parseTime=false", dbname))
 	if err != nil {
 		return nil, NewErr(err)
 	}
 
-	db := Db{dbRaw, dbname}
+	db := DB{dbRaw, dbname}
 	DbMap[dbname] = &db
 
 	return &db, nil
