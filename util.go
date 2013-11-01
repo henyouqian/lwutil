@@ -26,11 +26,30 @@ var (
 	timeDiff                    int64
 	HttpCodeInternalServerError = http.StatusInternalServerError
 	HttpCodeBadRequest          = http.StatusBadRequest
+
+	DbMap = make(map[string]*Db)
 )
 
 type Err struct {
 	Error       string
 	ErrorString string
+}
+
+type Db struct {
+	*sql.DB
+	name string
+}
+
+func OpenDb(dbname string) (*Db, error) {
+	dbRaw, err := sql.Open("mysql", fmt.Sprintf("root@/%s?parseTime=false", dbname))
+	if err != nil {
+		return nil, NewErr(err)
+	}
+
+	db := Db{dbRaw, dbname}
+	DbMap[dbname] = &db
+
+	return &db, nil
 }
 
 func init() {
@@ -165,14 +184,6 @@ func EndTx(tx *sql.Tx, err *error) {
 	} else {
 		tx.Rollback()
 	}
-}
-
-func opendb(dbname string) (*sql.DB, error) {
-	db, err := sql.Open("mysql", fmt.Sprintf("root@/%s?parseTime=true", dbname))
-	if err != nil {
-		err = NewErr(err)
-	}
-	return db, err
 }
 
 //use go keyword to start a goroutine

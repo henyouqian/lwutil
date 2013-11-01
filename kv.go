@@ -157,6 +157,7 @@ func GetKvDb(key string, out interface{}) (exist bool, err error) {
 }
 
 type Hkv struct {
+	Db        *Db
 	TableName string
 	KeyName   string
 	KeyValue  interface{}
@@ -178,10 +179,13 @@ func HGetKvs(hkvs []Hkv) error {
 		}
 
 		numField := vValue.NumField()
-		args := make([]interface{}, 0, numField+1)
+		args := make([]interface{}, 0, numField+4)
 
 		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
 		args = append(args, key)
+		args = append(args, "_db")
+		args = append(args, "_kn")
+		args = append(args, "_kv")
 
 		vType := vValue.Type()
 		for i := 0; i < numField; i++ {
@@ -196,7 +200,24 @@ func HGetKvs(hkvs []Hkv) error {
 	}
 
 	for _, hkv := range hkvs {
-		_ = hkv
+		reply, _ := redis.Values(rc.Receive())
+
+		vValue := reflect.ValueOf(hkv.Value)
+		if vValue.Kind() == reflect.Ptr {
+			vValue = vValue.Elem()
+		}
+
+		numField := vValue.NumField()
+		args := make([]interface{}, 0, numField+3)
+		var dbName string
+		args = append(args, &dbName)
+		args = append(args, &hkv.TableName)
+		args = append(args, &hkv.KeyName)
+		for i := 0; i < numField; i++ {
+			args = append(args, vValue.Field(i).Addr().Interface())
+		}
+
+		redis.Scan(reply, args...)
 	}
 
 	return nil
@@ -216,10 +237,12 @@ func HSetKvs(hkvs []Hkv) error {
 		}
 
 		numField := vValue.NumField()
-		args := make([]interface{}, 0, numField*2+5)
+		args := make([]interface{}, 0, numField*2+7)
 
 		key := fmt.Sprintf("hkv/%s/%v", hkv.TableName, hkv.KeyValue)
 		args = append(args, key)
+		args = append(args, "_db")
+		args = append(args, hkv.Db.name)
 		args = append(args, "_kn")
 		args = append(args, hkv.KeyName)
 		args = append(args, "_kv")
