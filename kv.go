@@ -195,6 +195,7 @@ func HGetKvs(hkvs []Hkv) error {
 			args = append(args, vType.Field(i).Name)
 		}
 
+		rc.Send("exists", key)
 		rc.Send("hmget", args...)
 	}
 	err := rc.Flush()
@@ -205,6 +206,12 @@ func HGetKvs(hkvs []Hkv) error {
 	//deal with reply
 	needWriteToRedis := false
 	for ihkv, hkv := range hkvs {
+		existsInRedis, err := redis.Bool(rc.Receive())
+		if err != nil {
+			hkvs[ihkv].Error = err
+			continue
+		}
+
 		vValue := reflect.ValueOf(hkv.Value)
 		if vValue.Kind() == reflect.Ptr {
 			vValue = vValue.Elem()
@@ -216,7 +223,11 @@ func HGetKvs(hkvs []Hkv) error {
 			args = append(args, vValue.Field(i).Addr().Interface())
 		}
 
-		reply, _ := redis.Values(rc.Receive())
+		reply, err := redis.Values(rc.Receive())
+		if err != nil {
+			hkvs[ihkv].Error = err
+			continue
+		}
 		redis.Scan(reply, args...)
 
 		//need query form db?
@@ -239,17 +250,26 @@ func HGetKvs(hkvs []Hkv) error {
 			err := hkv.Db.QueryRow(strSql).Scan(nilFieldItfs...)
 			if err != nil {
 				hkvs[ihkv].Error = err
+				continue
 			} else { //if no error, then save to redis
 				var args redis.Args
 				key := hMakeKey(hkv.Db.Name, hkv.TableName, hkv.KeyName, hkv.KeyValue)
 				args = args.Add(key)
 				for i, v := range nilFieldNames {
 					args = args.Add(v)
-					args = args.AddFlat(vValue.Field(i).Interface())
+					args = args.Add(reflect.ValueOf(nilFieldItfs[i]).Elem().Interface())
 				}
-				rc.Send("hmset", args...)
+				err := rc.Send("hmset", args...)
+				if err != nil {
+					hkvs[ihkv].Error = err
+					continue
+				}
 				needWriteToRedis = true
-				glog.Infoln(args...)
+				
+				//if not exists in redis before, then set expire time
+				if !existsInRedis {
+					rc.Send("expire", key, CACHE_LIFE_SEC)
+				}
 			}
 		}
 	}
@@ -293,7 +313,7 @@ func HSetKvs(hkvs []Hkv) error {
 		}
 
 		//hkvz
-		t := GetRedisTimeUnix()
+		t := GetRedisTimeUnix() + CACHE_LIFE_SEC
 		rc.Send("zadd", "hkvz", t, key)
 	}
 
