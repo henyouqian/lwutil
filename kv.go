@@ -70,6 +70,7 @@ func StartKV(db *DB, pool *redis.Pool) {
 
 	//start save to db task
 	go RepeatSingletonTask(redisPool, "kvSaveToDbTask", saveToDBTask)
+	go RepeatSingletonTask(redisPool, "hkvSaveToDB", hkvSaveToDB)
 }
 
 func SetKv(key string, value interface{}, rc redis.Conn) error {
@@ -265,7 +266,7 @@ func HGetKvs(hkvs []Hkv) error {
 					continue
 				}
 				needWriteToRedis = true
-				
+
 				//if not exists in redis before, then set expire time
 				if !existsInRedis {
 					rc.Send("expire", key, CACHE_LIFE_SEC)
@@ -307,14 +308,12 @@ func HSetKvs(hkvs []Hkv) error {
 			args = append(args, vValue.Field(i).Interface())
 		}
 
-		err := rc.Send("hmset", args...)
-		if err != nil {
-			return NewErr(err)
-		}
+		rc.Send("hmset", args...)
 
 		//hkvz
-		t := GetRedisTimeUnix() + CACHE_LIFE_SEC
+		t := GetRedisTimeUnix()
 		rc.Send("zadd", "hkvz", t, key)
+		rc.Send("persist", key)
 	}
 
 	err := rc.Flush()
@@ -376,6 +375,13 @@ func hGetKv(db *sql.DB, tableName string, keyName string, keyValue interface{}, 
 //	_, err := kvDB.Exec("DELETE FROM kvs WHERE k=?", key)
 //	return NewErr(err)
 //}
+
+func hkvSaveToDB() {
+	rc := redisPool.Get()
+	defer rc.Close()
+
+	time.Sleep(time.Second * 1)
+}
 
 func saveToDBTask() {
 	//glog.Infoln("saveToDBTask")
