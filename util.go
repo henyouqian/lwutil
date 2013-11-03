@@ -658,3 +658,8 @@ func NewErrStr(err string) error {
 	_, file, line, _ := runtime.Caller(1)
 	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err, file, line))
 }
+
+func GenSerial(rc redis.Conn, key string, num uint32) (uint64, error) {
+	out, err := redis.Int64(rc.Do("incrby", fmt.Sprintf("serial/%s", key), num))
+	return uint64(out) - uint64(num) + 1, err
+}
