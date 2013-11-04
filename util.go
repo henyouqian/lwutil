@@ -187,7 +187,7 @@ func EndTx(tx *sql.Tx, err *error) {
 }
 
 //use go keyword to start a goroutine
-func RepeatSingletonTask(redisPool *redis.Pool, key string, f func()) {
+func RepeatSingletonTask(redisPool *redis.Pool, key string, f func() error) {
 	rc := redisPool.Get()
 	defer rc.Close()
 
@@ -199,21 +199,29 @@ func RepeatSingletonTask(redisPool *redis.Pool, key string, f func()) {
 			// it's mine
 			_, err := rc.Do("expire", redisKey, 2)
 			CheckError(err, "")
-			f()
-			runtime.Gosched()
-			continue
+			err = f()
+			if err != nil {
+				glog.Errorln(err)
+				time.Sleep(1 * time.Second)
+			} else {
+				runtime.Gosched()
+			}
 		} else {
 			// takeup
 			if rdsfp == "" {
 				_, err := rc.Do("setex", redisKey, 2, fingerprint)
 				CheckError(err, "")
-				f()
-				runtime.Gosched()
-				continue
+				err = f()
+				if err != nil {
+					glog.Errorln(err)
+					time.Sleep(1 * time.Second)
+				} else {
+					runtime.Gosched()
+				}
+			} else { //not mine
+				time.Sleep(1 * time.Second)
 			}
-		}
-
-		time.Sleep(1 * time.Second)
+		}		
 	}
 }
 

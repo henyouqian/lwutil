@@ -71,6 +71,7 @@ func StartKV(db *DB, pool *redis.Pool) {
 	//start save to db task
 	go RepeatSingletonTask(redisPool, "kvSaveToDbTask", saveToDBTask)
 	go RepeatSingletonTask(redisPool, "hkvSaveToDB", hkvSaveToDB)
+
 }
 
 func SetKv(key string, value interface{}, rc redis.Conn) error {
@@ -168,7 +169,7 @@ type Hkv struct {
 }
 
 func hMakeKey(dbName, tableName, keyName string, keyValue interface{}) string {
-	return fmt.Sprintf("hkv/[%s,%s,%s,%v]", dbName, tableName, keyName, keyValue)
+	return fmt.Sprintf("hkv/%s %s %s %v", dbName, tableName, keyName, keyValue)
 }
 
 func HGetKvs(hkvs []Hkv) error {
@@ -376,14 +377,51 @@ func hGetKv(db *sql.DB, tableName string, keyName string, keyValue interface{}, 
 //	return NewErr(err)
 //}
 
-func hkvSaveToDB() {
+func hkvSaveToDB() error {
 	rc := redisPool.Get()
 	defer rc.Close()
+	glog.Errorln("hkvSaveToDB")
+
+	// expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
+	expireTime := GetRedisTimeUnix()
+	reply, err := redis.Strings(rc.Do("ZRANGEBYSCORE", "hkvz", 0, expireTime, "LIMIT", 0, 100))
+	if err != nil {
+		return NewErr(err)
+	}
+
+	if len(reply) != 0 {
+		for _, key := range reply {
+			rc.Send("hgetall", key)
+		}
+		err := rc.Flush()
+		if err != nil {
+			return NewErr(err)
+		}
+		for _, key := range reply {
+			rpls, err := redis.Strings(rc.Receive())
+			if err != nil {
+				return NewErr(err)
+			}
+			var db, table, kn, kv string
+			_, err = fmt.Sscanf(key, "hkv/%s%s%s%s", &db, &table, &kn, &kv)
+			if err != nil {
+				return NewErr(err)
+			}
+			sql := fmt.Sprintf("INSERT INTO %s SET %s=%s", table, kn, kv)
+			for i := 0; i < len(rpls); {
+				sql += fmt.Sprintf(", %s=%s", rpls[i], rpls[i+1])
+				i += 2
+			}
+			glog.Errorln(sql, rpls)
+		}
+	}
 
 	time.Sleep(time.Second * 1)
+
+	return nil
 }
 
-func saveToDBTask() {
+func saveToDBTask() error {
 	//glog.Infoln("saveToDBTask")
 
 	rc := redisPool.Get()
@@ -394,16 +432,14 @@ func saveToDBTask() {
 	//get expired
 	err := cmdGetExpiredKV.SendHash(rc, redisTime)
 	if err != nil {
-		glog.Errorln(err)
-		time.Sleep(time.Second * 1)
-		return
+		return err
 	}
 	rc.Flush()
 	delobjs, err := redis.Values(rc.Receive())
 	if err != nil {
 		glog.Errorln(err)
 		time.Sleep(time.Second * 1)
-		return
+		return err
 	}
 
 	if len(delobjs) != 0 {
@@ -435,9 +471,7 @@ func saveToDBTask() {
 			return nil
 		}()
 		if err != nil {
-			glog.Errorln(err)
-			time.Sleep(time.Second * 1)
-			return
+			return err
 		}
 
 		//del redis data
@@ -450,4 +484,6 @@ func saveToDBTask() {
 	} else {
 		time.Sleep(time.Second * 1)
 	}
+
+	return nil
 }
