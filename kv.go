@@ -97,3 +97,35 @@ func KvGet(kvs []KvData) error {
 
 	return nil
 }
+
+func KvSet(kvs []KvData) error {
+	if len(kvs) == 0 {
+		return nil
+	}
+
+	rc := kvRedisPool.Get()
+	defer rc.Close()
+
+	for i, data := range kvs {
+		_, redisKey := kvMakeKey(&data)
+
+		bytes, err := json.Marshal(data.Value)
+		if err != nil {
+			kvs[i].Error = err
+			continue
+		}
+		rc.Send("set", redisKey, bytes)
+		rc.Send("zadd", "kvz", GetRedisTimeUnix(), redisKey)
+	}
+
+	err := rc.Flush()
+	if err != nil {
+		return NewErr(err)
+	}
+
+	return nil
+}
+
+func KvSaveTask() error {
+
+}
