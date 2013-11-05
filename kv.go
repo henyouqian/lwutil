@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/garyburd/redigo/redis"
-	// "github.com/golang/glog"
+	"github.com/golang/glog"
 )
 
 var (
@@ -127,5 +127,27 @@ func KvSet(kvs []KvData) error {
 }
 
 func KvSaveTask() error {
+	rc := kvRedisPool.Get()
+	defer rc.Close()
+	//glog.Errorln("hkvSaveToDB")
 
+	// expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
+	expireTime := GetRedisTimeUnix()
+	keys, err := redis.Values(rc.Do("ZRANGEBYSCORE", "kvz", 0, expireTime, "LIMIT", 0, 100))
+	if err != nil {
+		return NewErr(err)
+	}
+
+	if len(keys) != 0 {
+		values, err := redis.Values(rc.Do("mget", keys...))
+
+		if err != nil {
+			return NewErr(err)
+		}
+		for i, key := range keys {
+			glog.Errorln(key, values[i])
+		}
+	}
+
+	return nil
 }
