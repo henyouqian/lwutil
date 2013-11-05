@@ -70,7 +70,7 @@ func StartKV(db *DB, pool *redis.Pool) {
 
 	//start save to db task
 	go RepeatSingletonTask(redisPool, "kvSaveToDbTask", saveToDBTask)
-	go RepeatSingletonTask(redisPool, "hkvSaveToDB", hkvSaveToDB)
+	//go RepeatSingletonTask(redisPool, "hkvSaveToDB", hkvSaveToDB)
 
 }
 
