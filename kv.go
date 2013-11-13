@@ -2,152 +2,97 @@ package lwutil
 
 import (
 	"encoding/json"
+	//"fmt"
 	"fmt"
 	"github.com/garyburd/redigo/redis"
-	"github.com/golang/glog"
+	"github.com/henyouqian/lvdb"
+	//"github.com/golang/glog"
+	//"strings"
 )
 
 var (
 	kvRedisPool *redis.Pool
+	lvdbPool    *lvDB.Pool
 )
 
 func KvStart(pool *redis.Pool) {
 	kvRedisPool = pool
+	lvdbPool = lvDB.NewPool("127.0.0.1:1234", 10)
 }
 
-type KvData struct {
-	Db    *DB
-	Table string
+type Kv struct {
 	Key   interface{}
 	Value interface{}
-	Error error
 }
 
-func kvMakeKey(data *KvData) (dbKey, redisKey string) {
-	dbKey = fmt.Sprintf("%v", data.Key)
-	if len(dbKey) > 40 {
-		dbKey = Sha224(dbKey)
+func kvMakeKey(keyRaw interface{}) ([]byte, error) {
+	r := []byte(fmt.Sprintf("%v", keyRaw))
+	if len(r) == 0 {
+		return r, NewErrStr("empty key")
 	}
-	redisKey = fmt.Sprintf("kv/%s/%s/%s", data.Db.Name, data.Table, dbKey)
-	return dbKey, redisKey
+	return r, nil
 }
 
-func KvGet(kvs []KvData) error {
-	if len(kvs) == 0 {
-		return nil
-	}
-
-	rc := kvRedisPool.Get()
-	defer rc.Close()
-
-	redisKeys := make([]string, len(kvs))
-	dbKeys := make([]string, len(kvs))
-
-	//try redis first
-	for i, data := range kvs {
-		dbKey, redisKey := kvMakeKey(&data)
-		redisKeys[i] = redisKey
-		dbKeys[i] = dbKey
-		rc.Send("get", redisKey)
-	}
-
-	err := rc.Flush()
+func KvPut(kvs ...Kv) error {
+	client, err := lvdbPool.Get()
 	if err != nil {
 		return NewErr(err)
 	}
+	defer client.Close()
 
-	needFlush := false
-	for i, data := range kvs {
-		bytes, err := redis.Bytes(rc.Receive())
-		if err != nil && err != redis.ErrNil {
-			kvs[i].Error = err
+	lvdbKvs := make([]lvDB.Kv, len(kvs))
+	for i, kv := range kvs {
+		lvdbKvs[i].Key, err = kvMakeKey(kv.Key)
+		if err != nil {
+			return NewErr(err)
 		}
-		if len(bytes) == 0 { //redis miss, try db
-			row := data.Db.QueryRow("SELECT v FROM test WHERE k=?", dbKeys[i])
-			err = row.Scan(&bytes)
-			if err != nil {
-				kvs[i].Error = err
-				continue
-			}
-
-			err := json.Unmarshal(bytes, kvs[i].Value)
-			if err != nil {
-				kvs[i].Error = err
-				continue
-			}
-
-			//write to redis
-			needFlush = true
-			rc.Send("setex", redisKeys[i], CACHE_LIFE_SEC, bytes)
-		} else { //redis hit
-			err := json.Unmarshal(bytes, kvs[i].Value)
-			if err != nil {
-				kvs[i].Error = err
-				continue
-			}
-		}
-	}
-
-	if needFlush {
-		err := rc.Flush()
+		lvdbKvs[i].Value, err = json.Marshal(kv.Value)
 		if err != nil {
 			return NewErr(err)
 		}
 	}
 
-	return nil
+	err = client.Put(lvdbKvs...)
+
+	return NewErr(err)
 }
 
-func KvSet(kvs []KvData) error {
-	if len(kvs) == 0 {
-		return nil
+func KvGet(keys ...interface{}) ([][]byte, error) {
+	client, err := lvdbPool.Get()
+	if err != nil {
+		return nil, NewErr(err)
 	}
+	defer client.Close()
 
-	rc := kvRedisPool.Get()
-	defer rc.Close()
-
-	for i, data := range kvs {
-		_, redisKey := kvMakeKey(&data)
-
-		bytes, err := json.Marshal(data.Value)
+	lvdbKeys := make([][]byte, len(keys))
+	for i, key := range keys {
+		lvdbKeys[i], err = kvMakeKey(key)
 		if err != nil {
-			kvs[i].Error = err
-			continue
+			return nil, NewErr(err)
 		}
-		rc.Send("set", redisKey, bytes)
-		rc.Send("zadd", "kvz", GetRedisTimeUnix(), redisKey)
 	}
 
-	err := rc.Flush()
-	if err != nil {
-		return NewErr(err)
-	}
+	replies, err := client.Get(lvdbKeys...)
 
-	return nil
+	if len(replies) != len(keys) {
+		return nil, NewErrStr("len(replies) != len(kvs)")
+	}
+	return replies, NewErr(err)
 }
 
-func KvSaveTask() error {
-	rc := kvRedisPool.Get()
-	defer rc.Close()
-	//glog.Errorln("hkvSaveToDB")
-
-	// expireTime := GetRedisTimeUnix() + CACHE_LIFE_SEC
-	expireTime := GetRedisTimeUnix()
-	keys, err := redis.Values(rc.Do("ZRANGEBYSCORE", "kvz", 0, expireTime, "LIMIT", 0, 100))
-	if err != nil {
-		return NewErr(err)
+func KvScan(in [][]byte, out ...interface{}) error {
+	if len(out) > len(in) {
+		return NewErrStr("len(out) > len(in)")
 	}
-
-	if len(keys) != 0 {
-		values, err := redis.Values(rc.Do("mget", keys...))
-
+	for i, _ := range out {
+		err := json.Unmarshal(in[i], out[i])
 		if err != nil {
 			return NewErr(err)
 		}
-		for i, key := range keys {
-			glog.Errorln(key, values[i])
-		}
 	}
+	return nil
+}
 
+func KvDel(key interface{}) error {
 	return nil
 }
