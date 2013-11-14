@@ -25,7 +25,7 @@ type Kv struct {
 	Value interface{}
 }
 
-func kvMakeKey(keyRaw interface{}) ([]byte, error) {
+func kvMakeLvdbKey(keyRaw interface{}) ([]byte, error) {
 	r := []byte(fmt.Sprintf("%v", keyRaw))
 	if len(r) == 0 {
 		return r, NewErrStr("empty key")
@@ -33,7 +33,63 @@ func kvMakeKey(keyRaw interface{}) ([]byte, error) {
 	return r, nil
 }
 
+func kvMakeRedisKey(keyRaw interface{}) ([]byte, error) {
+	r := []byte(fmt.Sprintf("_kv/%v", keyRaw))
+	if len(r) == 0 {
+		return r, NewErrStr("empty key")
+	}
+	return r, nil
+}
+
 func KvPut(kvs ...Kv) error {
+	rc := kvRedisPool.Get()
+	defer rc.Close()
+
+	for _, kv := range kvs {
+		redisKey, err := kvMakeRedisKey(kv.Key)
+		if err != nil {
+			return NewErr(err)
+		}
+
+		bytes, err := json.Marshal(kv.Value)
+		if err != nil {
+			return NewErr(err)
+		}
+		rc.Send("set", redisKey, bytes)
+		rc.Send("zadd", "_kvz", GetRedisTimeUnix(), redisKey)
+	}
+
+	err := rc.Flush()
+	return NewErr(err)
+}
+
+func KvGet(keys ...interface{}) ([][]byte, error) {
+	//redis
+
+	//lvdb
+	client, err := lvdbPool.Get()
+	if err != nil {
+		return nil, NewErr(err)
+	}
+	defer client.Close()
+
+	lvdbKeys := make([][]byte, len(keys))
+	for i, key := range keys {
+		lvdbKeys[i], err = kvMakeLvdbKey(key)
+		if err != nil {
+			return nil, NewErr(err)
+		}
+	}
+
+	replies, err := client.Get(lvdbKeys...)
+
+	if len(replies) != len(keys) {
+		return nil, NewErrStr("len(replies) != len(kvs)")
+	}
+	return replies, NewErr(err)
+}
+
+func KvPutDb(kvs ...Kv) error {
 	client, err := lvdbPool.Get()
 	if err != nil {
 		return NewErr(err)
@@ -42,7 +98,7 @@ func KvPut(kvs ...Kv) error {
 
 	lvdbKvs := make([]lvDB.Kv, len(kvs))
 	for i, kv := range kvs {
-		lvdbKvs[i].Key, err = kvMakeKey(kv.Key)
+		lvdbKvs[i].Key, err = kvMakeLvdbKey(kv.Key)
 		if err != nil {
 			return NewErr(err)
 		}
@@ -57,7 +113,7 @@ func KvPut(kvs ...Kv) error {
 	return NewErr(err)
 }
 
-func KvGet(keys ...interface{}) ([][]byte, error) {
+func KvGetDb(keys ...interface{}) ([][]byte, error) {
 	client, err := lvdbPool.Get()
 	if err != nil {
 		return nil, NewErr(err)
@@ -66,7 +122,7 @@ func KvGet(keys ...interface{}) ([][]byte, error) {
 
 	lvdbKeys := make([][]byte, len(keys))
 	for i, key := range keys {
-		lvdbKeys[i], err = kvMakeKey(key)
+		lvdbKeys[i], err = kvMakeLvdbKey(key)
 		if err != nil {
 			return nil, NewErr(err)
 		}
@@ -80,6 +136,25 @@ func KvGet(keys ...interface{}) ([][]byte, error) {
 	return replies, NewErr(err)
 }
 
+func KvDelDb(keys ...interface{}) error {
+	client, err := lvdbPool.Get()
+	if err != nil {
+		return NewErr(err)
+	}
+	defer client.Close()
+
+	lvdbKeys := make([][]byte, len(keys))
+	for i, key := range keys {
+		lvdbKeys[i], err = kvMakeLvdbKey(key)
+		if err != nil {
+			return NewErr(err)
+		}
+	}
+
+	err = client.Del(lvdbKeys...)
+	return NewErr(err)
+}
+
 func KvScan(in [][]byte, out ...interface{}) error {
 	if len(out) > len(in) {
 		return NewErrStr("len(out) > len(in)")
@@ -91,23 +166,4 @@ func KvScan(in [][]byte, out ...interface{}) error {
 		}
 	}
 	return nil
-}
-
-func KvDel(keys ...interface{}) error {
-	client, err := lvdbPool.Get()
-	if err != nil {
-		return NewErr(err)
-	}
-	defer client.Close()
-
-	lvdbKeys := make([][]byte, len(keys))
-	for i, key := range keys {
-		lvdbKeys[i], err = kvMakeKey(key)
-		if err != nil {
-			return NewErr(err)
-		}
-	}
-
-	err = client.Del(lvdbKeys...)
-	return NewErr(err)
 }
