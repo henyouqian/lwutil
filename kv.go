@@ -93,6 +93,21 @@ func KvScan(in [][]byte, out ...interface{}) error {
 	return nil
 }
 
-func KvDel(key interface{}) error {
-	return nil
+func KvDel(keys ...interface{}) error {
+	client, err := lvdbPool.Get()
+	if err != nil {
+		return NewErr(err)
+	}
+	defer client.Close()
+
+	lvdbKeys := make([][]byte, len(keys))
+	for i, key := range keys {
+		lvdbKeys[i], err = kvMakeKey(key)
+		if err != nil {
+			return NewErr(err)
+		}
+	}
+
+	err = client.Del(lvdbKeys...)
+	return NewErr(err)
 }
