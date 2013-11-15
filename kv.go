@@ -18,7 +18,15 @@ var (
 func KvStart(pool *redis.Pool) error {
 	kvRedisPool = pool
 	lvdbPool = lvDB.NewPool("127.0.0.1:1234", 10)
-	return nil
+
+	client, err := lvdbPool.Get()
+	if err != nil {
+		return NewErr(err)
+	}
+	defer client.Close()
+
+	err = client.Ping()
+	return NewErr(err)
 }
 
 type Kv struct {
