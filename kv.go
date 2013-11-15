@@ -64,7 +64,39 @@ func KvPut(kvs ...Kv) error {
 }
 
 func KvGet(keys ...interface{}) ([][]byte, error) {
+	keyNum := len(keys)
+	replies := make([][]byte, keyNum)
+	exists := make([]bool, keyNum)
+	lvdbKeys := make([][]byte, 0, keyNum)
+
+	rc := kvRedisPool.Get()
+	defer rc.Close()
+
 	//redis
+	for i, key := range keys {
+		redisKey, err := kvMakeRedisKey(key)
+		if err != nil {
+			return nil, NewErr(err)
+		}
+
+		replies[i], err = redis.Bytes(rc.Do("get", redisKey))
+		if err == redis.ErrNil {
+			lvdbKey, err := kvMakeLvdbKey(key)
+			if err != nil {
+				return nil, NewErr(err)
+			}
+			lvdbKeys = append(lvdbKeys, lvdbKey)
+			exists[i] = false
+		} else if err != nil {
+			return nil, NewErr(err)
+		} else {
+			exists[i] = true
+		}
+	}
+
+	if len(lvdbKeys) == 0 {
+		return replies, nil
+	}
 
 	//lvdb
 	client, err := lvdbPool.Get()
@@ -73,19 +105,23 @@ func KvGet(keys ...interface{}) ([][]byte, error) {
 	}
 	defer client.Close()
 
-	lvdbKeys := make([][]byte, len(keys))
-	for i, key := range keys {
-		lvdbKeys[i], err = kvMakeLvdbKey(key)
-		if err != nil {
-			return nil, NewErr(err)
+	dbValues, err := client.Get(lvdbKeys...)
+	if err != nil {
+		return nil, NewErr(err)
+	}
+
+	if len(lvdbKeys) != len(dbValues) {
+		return nil, NewErrStr("len(lvdbKeys) != len(dbValues)")
+	}
+
+	idbv := 0
+	for i, _ := range replies {
+		if exists[i] == false {
+			replies[i] = dbValues[idbv]
+			idbv ++
 		}
 	}
 
-	replies, err := client.Get(lvdbKeys...)
-
-	if len(replies) != len(keys) {
-		return nil, NewErrStr("len(replies) != len(kvs)")
-	}
 	return replies, NewErr(err)
 }
 
