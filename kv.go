@@ -15,9 +15,10 @@ var (
 	lvdbPool    *lvDB.Pool
 )
 
-func KvStart(pool *redis.Pool) {
+func KvStart(pool *redis.Pool) error {
 	kvRedisPool = pool
 	lvdbPool = lvDB.NewPool("127.0.0.1:1234", 10)
+	return nil
 }
 
 type Kv struct {
@@ -118,7 +119,7 @@ func KvGet(keys ...interface{}) ([][]byte, error) {
 	for i, _ := range replies {
 		if exists[i] == false {
 			replies[i] = dbValues[idbv]
-			idbv ++
+			idbv++
 		}
 	}
 
@@ -193,7 +194,7 @@ func KvDelDb(keys ...interface{}) error {
 
 func KvScan(in [][]byte, out ...interface{}) error {
 	if len(out) > len(in) {
-		return NewErrStr("len(out) > len(in)")
+		return NewErrStr(fmt.Sprintf("len(out) > len(in): out=%v, in=%v", out, in))
 	}
 	for i, _ := range out {
 		err := json.Unmarshal(in[i], out[i])
