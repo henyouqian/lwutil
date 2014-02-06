@@ -57,13 +57,14 @@ func init() {
 	PanicIfError(err)
 	defer c.Close()
 
-	t, err := redis.Values(c.Do("time"))
-	PanicIfError(err)
-	var sec int64
-	_, err = redis.Scan(t, &sec)
-	PanicIfError(err)
+	// t, err := redis.Values(c.Do("time"))
+	// PanicIfError(err)
+	// var sec int64
+	// _, err = redis.Scan(t, &sec)
+	// PanicIfError(err)
 
-	timeDiff = sec - time.Now().Unix()
+	// timeDiff = sec - time.Now().Unix()
+	timeDiff = 0
 }
 
 func GetRedisTime() time.Time {
@@ -126,6 +127,19 @@ func CheckError(err error, errType string) {
 	_, file, line, _ := runtime.Caller(1)
 	errStr := fmt.Sprintf("%s\n\t%s : %d", err.Error(), file, line)
 	panic(Err{errType, errStr})
+}
+
+func CheckSsdbError(resp []string, err error) {
+	if err != nil {
+		_, file, line, _ := runtime.Caller(1)
+		errStr := fmt.Sprintf("%s\n\t%s : %d", err.Error(), file, line)
+		panic(Err{"ssdbError", errStr})
+	}
+	if resp[0] != "ok" {
+		_, file, line, _ := runtime.Caller(1)
+		errStr := fmt.Sprintf("%s\n\t%s : %d", resp[0], file, line)
+		panic(Err{"ssdbNotOk", errStr})
+	}
 }
 
 func SendError(errType, errStr string) {
@@ -221,7 +235,7 @@ func RepeatSingletonTask(redisPool *redis.Pool, key string, f func() error) {
 			} else { //not mine
 				time.Sleep(1 * time.Second)
 			}
-		}		
+		}
 	}
 }
 
@@ -667,7 +681,7 @@ func NewErrStr(err string) error {
 	return errors.New(fmt.Sprintf("%s\n\t%s : %d", err, file, line))
 }
 
-func GenSerial(rc redis.Conn, key string, num uint32) (uint64, error) {
+func _GenSerial(rc redis.Conn, key string, num uint32) (uint64, error) {
 	out, err := redis.Int64(rc.Do("incrby", fmt.Sprintf("serial/%s", key), num))
 	return uint64(out) - uint64(num) + 1, err
 }
