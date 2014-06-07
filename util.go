@@ -142,6 +142,19 @@ func CheckSsdbError(resp []string, err error) {
 	}
 }
 
+func CheckSsdbErrorDesc(resp []string, err error, desc string) {
+	if err != nil {
+		_, file, line, _ := runtime.Caller(1)
+		errStr := fmt.Sprintf("%s\n\t%s\n\t%s : %d", err.Error(), desc, file, line)
+		panic(Err{"ssdbError", errStr})
+	}
+	if resp[0] != "ok" {
+		_, file, line, _ := runtime.Caller(1)
+		errStr := fmt.Sprintf("%s\n\t%s\n\t%s : %d", resp[0], desc, file, line)
+		panic(Err{"ssdbNotOk", errStr})
+	}
+}
+
 func SendError(errType, errStr string) {
 	_, file, line, _ := runtime.Caller(1)
 	errStr = fmt.Sprintf("%s\n\t%s : %d", errStr, file, line)
