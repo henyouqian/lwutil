@@ -108,6 +108,8 @@ type ReqHandler func(http.ResponseWriter, *http.Request)
 func (fn ReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer handleError(w)
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "X-Requested-With")
+	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	fn(w, r)
 }
 
