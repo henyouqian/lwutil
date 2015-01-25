@@ -105,9 +105,16 @@ func handleError(w http.ResponseWriter) {
 
 type ReqHandler func(http.ResponseWriter, *http.Request)
 
+var AccessControlAllowOrigins map[string]bool = map[string]bool{}
+
 func (fn ReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer handleError(w)
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	// w.Header().Set("Access-Control-Allow-Origin", "*")
+	origin := r.Header.Get("Origin")
+	if AccessControlAllowOrigins[origin] {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Headers", "X-Requested-With")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 	fn(w, r)
