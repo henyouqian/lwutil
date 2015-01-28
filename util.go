@@ -117,6 +117,7 @@ func (fn ReqHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Access-Control-Allow-Headers", "X-Requested-With")
 	w.Header().Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+	w.Header().Set("Cache-Control", "no-cache")
 	fn(w, r)
 }
 
