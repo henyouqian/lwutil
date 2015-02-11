@@ -80,9 +80,13 @@ func handleError(w http.ResponseWriter) {
 		encoder := json.NewEncoder(w)
 
 		var err Err
+		needLog := true
 		switch r.(type) {
 		case Err:
 			err = r.(Err)
+			if err.Error == "err_auth" {
+				needLog = false
+			}
 		default:
 			err = Err{"", fmt.Sprintf("%v", r)}
 			buf := make([]byte, 2048)
@@ -97,7 +101,9 @@ func handleError(w http.ResponseWriter) {
 			w.WriteHeader(HttpCodeBadRequest)
 		}
 
-		glog.Errorln(r)
+		if needLog {
+			glog.Errorln(r)
+		}
 
 		encoder.Encode(&err)
 	}
